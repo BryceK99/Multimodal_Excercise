@@ -23,6 +23,7 @@ class MLLMPreTrainedModel(LLMPreTrainedModel):
 
 
 class MLLMModel(MLLMPreTrainedModel):
+
     def __init__(self, config):
         super().__init__(config)
         self.llm = LLMForCausalLM(config)
@@ -51,13 +52,11 @@ class MLLMModel(MLLMPreTrainedModel):
         return model
 
     def init_resampler(self, embed_dim, vision_dim):
-        return Resampler(
-            num_queries=self.config.query_num,
-            embed_dim=embed_dim,
-            num_heads=embed_dim // 128,
-            kv_dim=vision_dim,
-            adaptive=True
-        )
+        return Resampler(num_queries=self.config.query_num,
+                         embed_dim=embed_dim,
+                         num_heads=embed_dim // 128,
+                         kv_dim=vision_dim,
+                         adaptive=True)
 
     def get_input_embeddings(self):
         return self.llm.get_input_embeddings()
@@ -81,18 +80,23 @@ class MLLMModel(MLLMPreTrainedModel):
         vision_hidden_states = self.get_vision_hidden_states(data)
 
         if hasattr(self.llm.config, 'scale_emb'):
-            vllm_embedding = self.llm.model.embed_tokens(data['input_ids']) * self.llm.config.scale_emb
+            vllm_embedding = self.llm.model.embed_tokens(
+                data['input_ids']) * self.llm.config.scale_emb
         else:
             vllm_embedding = self.llm.model.embed_tokens(data['input_ids'])
 
-        vision_hidden_states = [i.type(vllm_embedding.dtype) if isinstance(
-            i, torch.Tensor) else i for i in vision_hidden_states]
+        vision_hidden_states = [
+            i.type(vllm_embedding.dtype) if isinstance(i, torch.Tensor) else i
+            for i in vision_hidden_states
+        ]
 
         bs = len(data['input_ids'])
         ### ===> 合并 vision_hidden_states 与 vllm_embedding，
         # 其中，vision_hidden_states 为视觉编码，当前 vllm_embedding 仅为语言模型编码
         for i in range(bs):
-            pass
+            vllm_embedding[i] = torch.cat([vllm_embedding[i]] +
+                                          vision_hidden_states[i],
+                                          dim=0)
         ### <===
 
         return vllm_embedding, vision_hidden_states
@@ -108,23 +112,31 @@ class MLLMModel(MLLMPreTrainedModel):
             img_cnt = []
             for pixel_values in pixel_values_list:
                 img_cnt.append(len(pixel_values))
-                all_pixel_values.extend([i.flatten(end_dim=1).permute(1, 0) for i in pixel_values])
+                all_pixel_values.extend(
+                    [i.flatten(end_dim=1).permute(1, 0) for i in pixel_values])
 
             # exist image
             if all_pixel_values:
-                tgt_sizes = [tgt_size for tgt_size in tgt_sizes if isinstance(tgt_size, torch.Tensor)]
+                tgt_sizes = [
+                    tgt_size for tgt_size in tgt_sizes
+                    if isinstance(tgt_size, torch.Tensor)
+                ]
                 tgt_sizes = torch.vstack(tgt_sizes).type(torch.int32)
 
                 max_patches = torch.max(tgt_sizes[:, 0] * tgt_sizes[:, 1])
 
-                all_pixel_values = torch.nn.utils.rnn.pad_sequence(all_pixel_values, batch_first=True,
-                                                                   padding_value=0.0)
+                all_pixel_values = torch.nn.utils.rnn.pad_sequence(
+                    all_pixel_values, batch_first=True, padding_value=0.0)
                 B, L, _ = all_pixel_values.shape
-                all_pixel_values = all_pixel_values.permute(0, 2, 1).reshape(B, 3, -1, L)
+                all_pixel_values = all_pixel_values.permute(0, 2, 1).reshape(
+                    B, 3, -1, L)
 
-                patch_attn_mask = torch.zeros((B, 1, max_patches), dtype=torch.bool, device=device)
+                patch_attn_mask = torch.zeros((B, 1, max_patches),
+                                              dtype=torch.bool,
+                                              device=device)
                 for i in range(B):
-                    patch_attn_mask[i, 0, :tgt_sizes[i][0] * tgt_sizes[i][1]] = True
+                    patch_attn_mask[i, 0, :tgt_sizes[i][0] *
+                                    tgt_sizes[i][1]] = True
 
                 vision_batch_size = self.config.vision_batch_size
                 all_pixel_values = all_pixel_values.type(dtype)
@@ -133,29 +145,41 @@ class MLLMModel(MLLMPreTrainedModel):
                     for i in range(0, B, vision_batch_size):
                         start_idx = i
                         end_idx = i + vision_batch_size
-                        tmp_hs = self.vpm(all_pixel_values[start_idx:end_idx], patch_attention_mask=patch_attn_mask[start_idx:end_idx], tgt_sizes=tgt_sizes[start_idx:end_idx]).last_hidden_state
+                        tmp_hs = self.vpm(
+                            all_pixel_values[start_idx:end_idx],
+                            patch_attention_mask=patch_attn_mask[
+                                start_idx:end_idx],
+                            tgt_sizes=tgt_sizes[start_idx:end_idx]
+                        ).last_hidden_state
                         hs.append(tmp_hs)
                     vision_embedding = torch.cat(hs, dim=0)
                 else:
-                    vision_embedding = self.vpm(all_pixel_values, patch_attention_mask=patch_attn_mask, tgt_sizes=tgt_sizes).last_hidden_state
+                    vision_embedding = self.vpm(
+                        all_pixel_values,
+                        patch_attention_mask=patch_attn_mask,
+                        tgt_sizes=tgt_sizes).last_hidden_state
                 vision_embedding = self.resampler(vision_embedding, tgt_sizes)
 
                 start = 0
                 for pixel_values in pixel_values_list:
                     img_cnt = len(pixel_values)
                     if img_cnt > 0:
-                        vision_hidden_states.append(vision_embedding[start: start + img_cnt])
+                        vision_hidden_states.append(
+                            vision_embedding[start:start + img_cnt])
                         start += img_cnt
                     else:
                         vision_hidden_states.append([])
-            else: # no image
+            else:  # no image
                 if self.training:
-                    dummy_image = torch.zeros(
-                        (1, 3, 224, 224),
-                        device=device, dtype=dtype
-                    )
-                    tgt_sizes = torch.Tensor([[(224 // self.config.patch_size), math.ceil(224 / self.config.patch_size)]]).type(torch.int32)
-                    dummy_feature = self.resampler(self.vpm(dummy_image).last_hidden_state, tgt_sizes)
+                    dummy_image = torch.zeros((1, 3, 224, 224),
+                                              device=device,
+                                              dtype=dtype)
+                    tgt_sizes = torch.Tensor([[
+                        (224 // self.config.patch_size),
+                        math.ceil(224 / self.config.patch_size)
+                    ]]).type(torch.int32)
+                    dummy_feature = self.resampler(
+                        self.vpm(dummy_image).last_hidden_state, tgt_sizes)
                 else:
                     dummy_feature = []
                 for _ in range(len(pixel_values_list)):
@@ -172,24 +196,36 @@ class MLLMModel(MLLMPreTrainedModel):
         if position_ids.dtype != torch.int64:
             position_ids = position_ids.long()
 
-        return self.llm(
-            input_ids=None,
-            position_ids=position_ids,
-            inputs_embeds=vllm_embedding,
-            **kwargs
-        )
+        return self.llm(input_ids=None,
+                        position_ids=position_ids,
+                        inputs_embeds=vllm_embedding,
+                        **kwargs)
 
-    def _decode(self, inputs_embeds, tokenizer, attention_mask, decode_text=False, **kwargs):
-        terminators = [tokenizer.convert_tokens_to_ids(i) for i in self.terminators]
+    def _decode(self,
+                inputs_embeds,
+                tokenizer,
+                attention_mask,
+                decode_text=False,
+                **kwargs):
+        terminators = [
+            tokenizer.convert_tokens_to_ids(i) for i in self.terminators
+        ]
         ### ===> TODO: 实现语言模型 generate
-        output = None
+        output = self.llm.generate(inputs_embeds=inputs_embeds,
+                                   pad_token_id=0,
+                                   eos_token_id=terminators,
+                                   attention_mask=attention_mask,
+                                   **kwargs)
+
         ### <===
         if decode_text:
             return self._decode_text(output, tokenizer)
         return output
 
     def _decode_stream(self, inputs_embeds, tokenizer, **kwargs):
-        terminators = [tokenizer.convert_tokens_to_ids(i) for i in self.terminators]
+        terminators = [
+            tokenizer.convert_tokens_to_ids(i) for i in self.terminators
+        ]
         streamer = TextIteratorStreamer(tokenizer=tokenizer)
         generation_kwargs = {
             'inputs_embeds': inputs_embeds,
@@ -205,27 +241,34 @@ class MLLMModel(MLLMPreTrainedModel):
         return streamer
 
     def _decode_text(self, result_ids, tokenizer):
-        terminators = [tokenizer.convert_tokens_to_ids(i) for i in self.terminators]
+        terminators = [
+            tokenizer.convert_tokens_to_ids(i) for i in self.terminators
+        ]
         ### TODO: ===> 编写输出解码过程
         # 其中应该去除tokenizer.bos_id（句子起始特殊符号），以及terminators中的符号
-        result_text = None
+        result_text = ""
+        for ids in result_ids:
+            filtered_ids = [
+                id for id in ids
+                if id != tokenizer.bos_token_id and id not in terminators
+            ]
+            result_text += tokenizer.decode(filtered_ids,
+                                            skip_special_tokens=True)
         ### <===
         return result_text
 
-    def generate(
-        self,
-        input_ids=None,
-        pixel_values=None,
-        tgt_sizes=None,
-        image_bound=None,
-        attention_mask=None,
-        tokenizer=None,
-        vision_hidden_states=None,
-        return_vision_hidden_states=False,
-        stream=False,
-        decode_text=False,
-        **kwargs
-    ):
+    def generate(self,
+                 input_ids=None,
+                 pixel_values=None,
+                 tgt_sizes=None,
+                 image_bound=None,
+                 attention_mask=None,
+                 tokenizer=None,
+                 vision_hidden_states=None,
+                 return_vision_hidden_states=False,
+                 stream=False,
+                 decode_text=False,
+                 **kwargs):
         assert input_ids is not None
         assert len(input_ids) == len(pixel_values)
 
