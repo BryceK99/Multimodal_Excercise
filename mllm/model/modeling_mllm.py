@@ -93,10 +93,37 @@ class MLLMModel(MLLMPreTrainedModel):
         bs = len(data['input_ids'])
         ### ===> 合并 vision_hidden_states 与 vllm_embedding，
         # 其中，vision_hidden_states 为视觉编码，当前 vllm_embedding 仅为语言模型编码
+        embed_dtype = vllm_embedding.dtype
+        embed_device = vllm_embedding.device
+        vllm_embedding_list = []
         for i in range(bs):
-            vllm_embedding[i] = torch.cat([vllm_embedding[i]] +
-                                          vision_hidden_states[i],
-                                          dim=0)
+            new_embedding_list = []
+            last_end = 0
+            for id, (start, end) in enumerate(data['image_bound'][i]):
+                print(id, start, end, vision_hidden_states[i][id].shape)
+        #         new_embedding_list.append(vllm_embedding[i, last_end:start])
+        #         placeholder_len = end - start + 1
+        #         if id < len(vision_hidden_states[i]) and isinstance(
+        #                 vision_hidden_states[i][id], torch.Tensor):
+        #             vision_feat = vision_hidden_states[i][id]
+        #             vision_feat = vision_feat.to(dtype=embed_dtype,
+        #                                          device=embed_device)
+        #             vision_len = vision_feat.shape[0]
+        #             if vision_len < placeholder_len:
+        #                 pad = vision_feat.new_zeros((placeholder_len - vision_len,
+        #                                              vision_feat.shape[1]))
+        #                 vision_feat = torch.cat((vision_feat, pad), dim=0)
+        #             elif vision_len > placeholder_len:
+        #                 vision_feat = vision_feat[:placeholder_len]
+        #             new_embedding_list.append(vision_feat)
+        #         else:
+        #             new_embedding_list.append(
+        #                 vllm_embedding[i, start:end + 1])
+        #         last_end = end + 1
+        #     new_embedding_list.append(vllm_embedding[i, last_end:])
+        #     new_embedding = torch.cat(new_embedding_list, dim=0)
+        #     vllm_embedding_list.append(new_embedding)
+        # vllm_embedding = torch.stack(vllm_embedding_list, dim=0)
         ### <===
 
         return vllm_embedding, vision_hidden_states
@@ -286,7 +313,24 @@ class MLLMModel(MLLMPreTrainedModel):
         ### ===> TODO: 实现多模态大模型的 generation，注意不要计算模型参数的梯度。
         # 1. 获取模型视觉信号
         # 2. 实现 self._decode()，返回解码后的文本
-        result = None
+        with torch.inference_mode():
+            vision_hidden_states = self.get_vision_hidden_states(
+                model_inputs)
+            vllm_embedding, vision_hidden_states = self.get_vllm_embedding(
+                model_inputs)
+            if stream:
+                result = self._decode_stream(vllm_embedding,
+                                             tokenizer,
+                                             max_new_tokens=kwargs.get(
+                                                 'max_new_tokens', 50),
+                                             attention_mask=attention_mask,
+                                             **kwargs)
+            else:
+                result = self._decode(vllm_embedding,
+                                      tokenizer,
+                                      decode_text=decode_text,
+                                      attention_mask=attention_mask,
+                                      **kwargs)
         ### <===
         if return_vision_hidden_states:
             return result, vision_hidden_states

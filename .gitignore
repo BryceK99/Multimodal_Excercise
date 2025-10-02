@@ -46,3 +46,10 @@ submissions/
 
 # Data
 data/images
+data/objhal_bench.jsonl
+preference_train.json
+objhal_bench_answer.jsonl
+chair_300.pkl
+
+weights/
+coco_annotations
