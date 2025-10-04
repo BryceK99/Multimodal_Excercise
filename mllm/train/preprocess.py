@@ -71,17 +71,24 @@ class PreferenceDatasetDataCollator(object):
 def data_collator(examples, padding_value=0, max_length=2048):
     ### ===> TODO: 将多个样本整理为一个批次
     def trim_and_pad(seq, batch_first, padding_value):
+        seq_trimmed = seq[:max_length]
+        seq_padded = pad_sequence(seq_trimmed, batch_first=batch_first, padding_value=padding_value)
         ## 1. 截取并保留 max_length 以内的文本
         ## 2. 对保留文本进行填充（padding），可以使用 pytorch 库函数
-        return 0
+        return seq_padded
 
-    input_ids = None
-    position_ids = None
-    targets = None
-    attention_mask = None
-    image_bound = None
-    tgt_sizes = None
-    pixel_values = None
+    input_ids = trim_and_pad([e["input_ids"] for e in examples], padding_value=padding_value)
+    position_ids = trim_and_pad([e["position_ids"] for e in examples], padding_value=0)
+    targets = trim_and_pad([e["labels"] for e in examples], padding_value=-100)
+
+    if examples and examples[0].get("attention_mask", None) is not None:
+        attention_mask = trim_and_pad([e["attention_mask"] for e in examples], padding_value=0).to(torch.bool)
+    else:
+        attention_mask = input_ids.ne(padding_value).to(torch.bool) 
+
+    image_bound = [e.get("image_bound", []) for e in examples]
+    tgt_sizes = [e.get("tgt_sizes", []) for e in examples]
+    pixel_values = [e.get("pixel_values", []) for e in examples]
 
     return {
         "input_ids": input_ids,

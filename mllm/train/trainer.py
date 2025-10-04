@@ -28,10 +28,15 @@ class SFTTrainer(Trainer):
                 outputs = self.model.base_model(data = inputs, use_cache=False)
 
         if labels is not None:
-            ### ===> TODO: 实现监督微调损失函数计算
-            # 注意检查当前位置的 logits 对应的目标输出是否为下一个token
-            loss = None
-            ### <===
+            shift_logits = outputs.logits[:, :-1, :].contiguous()
+            shift_labels = labels[:, 1:].contiguous()
+
+            loss = F.cross_entropy(
+                shift_logits.view(-1, shift_logits.size(-1)),
+                shift_labels.view(-1),
+                ignore_index=-100,
+                reduction="mean",
+            )
         else:
             if isinstance(outputs, dict) and "loss" not in outputs:
                 raise ValueError(

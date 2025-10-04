@@ -52,6 +52,48 @@ class SupervisedDataset(Dataset):
         self.query_nums=query_nums
         self.batch_vision = batch_vision
         self.max_length = max_length
+        self.length = len(raw_data)
+    
+    def __len__(self):
+        return self.length
+
+    def __getitem__(self, i):
+        
+        raw = self.raw_data[i]
+
+        images_dict = { "<image>" : Image.open(raw["image"]).convert("RGB") } 
+        conversations = raw["conversations"]
+        
+        preprocessed = preprocess(
+            images_dict=images_dict,
+            conversations=conversations,
+            tokenizer=self.tokenizer,
+            transform=self.transform,
+            query_nums=self.query_nums,
+            slice_config=self.slice_config,
+            patch_size=self.patch_size,
+            batch_vision=self.batch_vision,
+            max_length=self.max_length,
+        )
+
+        attention_mask = preprocessed.get("attention_mask", None)
+        if attention_mask is None:
+            pad_id = 0 if self.tokenizer.pad_token_id is None else self.tokenizer.pad_token_id
+            attention_mask = preprocessed["input_ids"].ne(pad_id)
+            attention_mask = attention_mask.to(torch.bool)
+        
+        ret = dict(
+            input_ids=preprocessed["input_ids"],
+            position_ids=preprocessed["position_ids"],
+            labels=preprocessed["target"],
+            attention_mask=attention_mask,
+            pixel_values=preprocessed.get("pixel_values", None),
+            tgt_sizes=preprocessed.get("tgt_sizes", None),
+            image_bound=preprocessed["image_bound"],
+        )
+
+        return ret
+    
 
     ### <===
 
