@@ -1,15 +1,16 @@
 #!/bin/bash
 
 export PYTHONPATH=$PYTHONPATH:`realpath .`
-export CUDA_VISIBLE_DEVICES=4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1
 
-GPUS_PER_NODE=4
+GPUS_PER_NODE=2
 NNODES=1
 NODE_RANK=0
 MASTER_ADDR=localhost
 MASTER_PORT=6001
 
-MODEL="MODEL_PATH"
+MODEL="HaoyeZhang/MLLM_Excercise_Model
+"
 DATA="data/train.json"
 EVAL_DATA="data/test.json"
 MODEL_MAX_Length=2048 # if conduct multi-images sft, please set MODEL_MAX_Length=4096

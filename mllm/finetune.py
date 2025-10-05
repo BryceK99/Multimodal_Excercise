@@ -253,7 +253,7 @@ def init_model(model_args, data_args, training_args, lora_args):
 
     params_no_grad = [
         n for n, p in model.named_parameters() if not p.requires_grad]
-    rank0_print(f'No grad params are : {params_no_grad}')
+    # rank0_print(f'No grad params are : {params_no_grad}')
 
     # Load data
     if hasattr(model.config, "slice_config"):

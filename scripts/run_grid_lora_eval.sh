@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-export PYTHONPATH="${PYTHONPATH}:$(realpath .)"
+# export PYTHONPATH="${PYTHONPATH}:$(realpath .)"
 export CUDA_VISIBLE_DEVICES=0,1
 
 # Distributed defaults (can be overridden via CLI)

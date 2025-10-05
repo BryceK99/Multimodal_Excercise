@@ -51,5 +51,9 @@ preference_train.json
 objhal_bench_answer.jsonl
 chair_300.pkl
 
-weights/
+HaoyeZhang/
 coco_annotations
+outputs/lora
+runs_grid
+objhal_bench_answer*
+*pkl

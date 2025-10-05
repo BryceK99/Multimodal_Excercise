@@ -11,7 +11,7 @@ from transformers.utils import is_sagemaker_mp_enabled
 from transformers.trainer import *
 
 from mllm.train.inference_logp import get_batch_logps
-
+from typing import Dict, List, Tuple
 
 ### Trainer for SFT
 class SFTTrainer(Trainer):
@@ -176,7 +176,7 @@ class SFTTrainer(Trainer):
 
         return (loss, logits, labels)
 
-    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
+    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]], num) -> torch.Tensor:
         """
         Perform a training step on a batch of inputs.
 

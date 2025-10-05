@@ -27,7 +27,7 @@ class MLLMEvalModel(MLLMModel):
              tokenizer,
              processor=None,
              vision_hidden_states=None,
-             max_new_tokens=2048,
+             max_new_tokens=4096*2,
              min_new_tokens=0,
              sampling=True,
              max_inp_length=8192,
@@ -112,10 +112,11 @@ class MLLMEvalModel(MLLMModel):
 
         else:
             if batched:
-                answer = res
-            else:
-                answer = res[0]
-            return answer
+                return res
+            # 非 batch：res 可能是字符串或长度为 1 的列表
+            if isinstance(res, str):
+                return res
+            return res[0]
 
     def prepare_chat_inputs(self, tokenizer, system_prompt, msgs_list,
                             images_list):
@@ -130,21 +131,26 @@ class MLLMEvalModel(MLLMModel):
         input_images_lists = []
 
         for msgs, image in zip(msgs_list, images_list):
-            # Insert image token at the appropriate place in the conversation
-            # Here, we assume the image should be referenced at the start
             conversation = copy.deepcopy(msgs)
+
+            # 确保 image 是一个列表，以便统一处理
+            if image and not isinstance(image, list):
+                image = [image]
+
             if image:
-                # Insert image token at the beginning or as needed
+                # 根据图片数量插入同样数量的标签（去掉换行，避免对提示分词的微扰）
+                image_tags = "".join(["<image>./</image>"] * len(image))
                 if len(conversation) > 0 and "content" in conversation[0]:
-                    conversation[0][
-                        "content"] = "<image>./</image>\n" + conversation[0][
-                            "content"]
+                    conversation[0]["content"] = image_tags + conversation[0]["content"]
+
+            # 不在此处重复添加特殊符号，避免 tokenizer 发生不必要变化
             prompt = tokenizer.apply_chat_template(conversation,
                                                    tokenize=False,
                                                    add_generation_prompt=True,
                                                    system_prompt=system_prompt)
             prompts_lists.append(prompt)
-            input_images_lists.append([image] if image is not None else [])
+            # 直接使用 image 列表，不再进行二次包装
+            input_images_lists.append(image if image is not None else [])
 
         ### <===
 
@@ -170,6 +176,18 @@ def eval_model(args):
 
     ans_file = open(args.answers_file, 'w')
 
+    # 兼容旧参数：未显式指定 --decoding 时，沿用 --sampling 的语义
+    decoding_mode = args.decoding if args.decoding is not None else ("sampling" if args.sampling else "beam")
+    if decoding_mode == "sampling":
+        use_sampling = True
+        gen_kwargs = dict(temperature=args.temperature, top_p=args.top_p, top_k=args.top_k)
+    elif decoding_mode == "greedy":
+        use_sampling = False
+        gen_kwargs = dict(num_beams=1)
+    else:  # beam
+        use_sampling = False
+        gen_kwargs = dict(num_beams=args.num_beams)
+
     with torch.inference_mode():
         i = 0
         for item in tqdm(input_data):
@@ -182,12 +200,17 @@ def eval_model(args):
             else:
                 image = Image.open(image).convert('RGB')
 
+            # 传入长度与重复惩罚
+            chat_kwargs = dict(max_new_tokens=args.max_new_tokens,
+                               repetition_penalty=args.repetition_penalty)
+            chat_kwargs.update(gen_kwargs)
+
             answer = model.chat(image=image,
                                 msgs=msgs,
-                                context=None,
                                 tokenizer=tokenizer,
-                                sampling=args.sampling,
-                                processor=processor)
+                                sampling=use_sampling,
+                                processor=processor,
+                                **chat_kwargs)
 
             answer_dict = {
                 "idx": i,
@@ -208,6 +231,8 @@ def eval_model(args):
             ans_file.flush()
 
             i += 1
+            if args.max_samples is not None and i >= args.max_samples:
+                break
 
 
 if __name__ == '__main__':
@@ -216,6 +241,24 @@ if __name__ == '__main__':
     parser.add_argument("--question-file", type=str)
     parser.add_argument("--answers-file", type=str)
     parser.add_argument("--sampling", action='store_true')
+    parser.add_argument("--max-samples", type=int, default=None)
+    # 新增：解码方式与超参数（优先于 --sampling）
+    parser.add_argument("--decoding",
+                        choices=["greedy", "beam", "sampling"],
+                        default=None,
+                        help="选择解码方式；不传则与 --sampling 行为兼容（默认 beam）")
+    parser.add_argument("--num-beams", type=int, default=3, dest="num_beams",
+                        help="beam search 的束宽，--decoding beam 时生效")
+    parser.add_argument("--temperature", type=float, default=0.7,
+                        help="采样温度，--decoding sampling 时生效")
+    parser.add_argument("--top-p", type=float, default=0.8, dest="top_p",
+                        help="nucleus 采样阈值，--decoding sampling 时生效")
+    parser.add_argument("--top-k", type=int, default=100, dest="top_k",
+                        help="top-k 采样阈值，--decoding sampling 时生效")
+    parser.add_argument("--max-new-tokens", type=int, default=128, dest="max_new_tokens",
+                        help="最大新生成token数，控制输出长度")
+    parser.add_argument("--repetition-penalty", type=float, default=1.05, dest="repetition_penalty",
+                        help="重复惩罚，>1会降低重复，过大可能损伤Recall")
     args = parser.parse_args()
 
     eval_model(args)

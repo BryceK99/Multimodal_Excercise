@@ -100,30 +100,31 @@ class MLLMModel(MLLMPreTrainedModel):
             new_embedding_list = []
             last_end = 0
             for id, (start, end) in enumerate(data['image_bound'][i]):
-                print(id, start, end, vision_hidden_states[i][id].shape)
-        #         new_embedding_list.append(vllm_embedding[i, last_end:start])
-        #         placeholder_len = end - start + 1
-        #         if id < len(vision_hidden_states[i]) and isinstance(
-        #                 vision_hidden_states[i][id], torch.Tensor):
-        #             vision_feat = vision_hidden_states[i][id]
-        #             vision_feat = vision_feat.to(dtype=embed_dtype,
-        #                                          device=embed_device)
-        #             vision_len = vision_feat.shape[0]
-        #             if vision_len < placeholder_len:
-        #                 pad = vision_feat.new_zeros((placeholder_len - vision_len,
-        #                                              vision_feat.shape[1]))
-        #                 vision_feat = torch.cat((vision_feat, pad), dim=0)
-        #             elif vision_len > placeholder_len:
-        #                 vision_feat = vision_feat[:placeholder_len]
-        #             new_embedding_list.append(vision_feat)
-        #         else:
-        #             new_embedding_list.append(
-        #                 vllm_embedding[i, start:end + 1])
-        #         last_end = end + 1
-        #     new_embedding_list.append(vllm_embedding[i, last_end:])
-        #     new_embedding = torch.cat(new_embedding_list, dim=0)
-        #     vllm_embedding_list.append(new_embedding)
-        # vllm_embedding = torch.stack(vllm_embedding_list, dim=0)
+                # print(id, start, end, vision_hidden_states[i][id].shape, vllm_embedding[i].shape)
+                new_embedding_list.append(vllm_embedding[i, last_end:start])
+                placeholder_len = end - start + 1
+                if id < len(vision_hidden_states[i]) and isinstance(
+                        vision_hidden_states[i][id], torch.Tensor):
+                    vision_feat = vision_hidden_states[i][id]
+                    vision_feat = vision_feat.to(dtype=embed_dtype,
+                                                 device=embed_device)
+                    vision_len = vision_feat.shape[0]
+                    if vision_len < placeholder_len:
+                        pad = vision_feat.new_zeros((placeholder_len - vision_len,
+                                                     vision_feat.shape[1]))
+                        vision_feat = torch.cat((vision_feat, pad))
+                    elif vision_len > placeholder_len:
+                        vision_feat = vision_feat[:placeholder_len]
+                    new_embedding_list.append(vision_feat)
+                else:
+                    # 当不存在有效视觉特征时，回退到原始 token 的嵌入
+                    new_embedding_list.append(vllm_embedding[i, start:end + 1])
+                # 无论是否替换为视觉特征，都需要推进游标
+                last_end = end + 1
+            new_embedding_list.append(vllm_embedding[i, last_end:])
+            new_embedding = torch.cat(new_embedding_list, dim=0)
+            vllm_embedding_list.append(new_embedding)
+        vllm_embedding = torch.stack(vllm_embedding_list, dim=0)
         ### <===
 
         return vllm_embedding, vision_hidden_states
@@ -246,7 +247,13 @@ class MLLMModel(MLLMPreTrainedModel):
 
         ### <===
         if decode_text:
-            return self._decode_text(output, tokenizer)
+            prompt_lengths = None
+            if attention_mask is not None:
+                if isinstance(attention_mask, torch.Tensor):
+                    prompt_lengths = attention_mask.sum(dim=-1).tolist()
+                else:
+                    prompt_lengths = [int(mask.sum()) for mask in attention_mask]
+            return self._decode_text(output, tokenizer, prompt_lengths=prompt_lengths)
         return output
 
     def _decode_stream(self, inputs_embeds, tokenizer, **kwargs):
@@ -267,20 +274,69 @@ class MLLMModel(MLLMPreTrainedModel):
 
         return streamer
 
-    def _decode_text(self, result_ids, tokenizer):
+    def _decode_text(self, result_ids, tokenizer, prompt_lengths=None):
         terminators = [
             tokenizer.convert_tokens_to_ids(i) for i in self.terminators
         ]
         ### TODO: ===> 编写输出解码过程
         # 其中应该去除tokenizer.bos_id（句子起始特殊符号），以及terminators中的符号
-        result_text = ""
-        for ids in result_ids:
-            filtered_ids = [
-                id for id in ids
-                if id != tokenizer.bos_token_id and id not in terminators
+        # 仅解码新生成部分，避免包含提示词
+        if isinstance(result_ids, torch.Tensor):
+            sequences = result_ids
+        else:
+            try:
+                sequences = torch.as_tensor(result_ids)
+            except Exception:
+                # 某些情况下 transformers 返回 list[list[int]]
+                sequences = torch.tensor(result_ids)
+
+        if sequences.dim() == 1:
+            sequences = sequences.unsqueeze(0)
+
+        texts = []
+        bsz = sequences.size(0)
+        for b in range(bsz):
+            seq = sequences[b]
+            start = 0
+            if prompt_lengths is not None and b < len(prompt_lengths):
+                start = int(prompt_lengths[b])
+                # 如果返回的序列仅包含新生成 token（长度小于等于提示长度），则不剪切
+                if seq.numel() <= start:
+                    start = 0
+            gen_ids = seq[start:]
+            gen_ids = gen_ids[gen_ids != 0]
+            gen_ids = [
+                int(tid) for tid in gen_ids.tolist()
+                if tid != tokenizer.bos_token_id and tid not in terminators
             ]
-            result_text += tokenizer.decode(filtered_ids,
-                                            skip_special_tokens=True)
+            texts.append(tokenizer.decode(gen_ids, skip_special_tokens=True))
+
+        # 如果为空，尝试回退一次
+        if len(texts) == 1 and (texts[0] is None or texts[0].strip() == ""):
+            try:
+                # 回退路径：直接整体解码（去除特殊符号）
+                ids = sequences[0]
+                ids = ids[ids != 0]
+                ids = [int(tid) for tid in ids.tolist() if tid != tokenizer.bos_token_id and tid not in terminators]
+                fallback_text = tokenizer.decode(ids, skip_special_tokens=True)
+                texts[0] = fallback_text
+            except Exception:
+                pass
+        # 仍为空则尽量截取到第一个终止符之前
+        if len(texts) == 1 and (texts[0] is None or texts[0].strip() == ""):
+            try:
+                ids = sequences[0].tolist()
+                cut = len(ids)
+                for idx, tid in enumerate(ids):
+                    if tid in terminators:
+                        cut = idx
+                        break
+                ids = [int(tid) for tid in ids[:cut] if tid != 0 and tid != tokenizer.bos_token_id]
+                texts[0] = tokenizer.decode(ids, skip_special_tokens=True)
+            except Exception:
+                pass
+
+        result_text = texts[0] if len(texts) == 1 else texts
         ### <===
         return result_text
 
