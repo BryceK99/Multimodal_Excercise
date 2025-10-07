@@ -3,6 +3,7 @@ import json
 import copy
 import torch
 import pickle
+from copy import deepcopy
 
 import io
 import tqdm
@@ -143,9 +144,19 @@ def get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor, tokeniz
     ## 注意：
     ## 计算时注意logits与label对应关系是否正确，当前位置logits应该以后一个词为目标
     ## 只有输出部分应该被计算再内
-    per_token_logps = None
-    log_prob = None
-    average_log_prob = None
+    shifted_logits = logits[:, :-1, :].contiguous()
+    all_logps = torch.log_softmax(shifted_logits, dim=-1)
+
+    shift_labels = labels[:, 1:].contiguous()
+    invalid_mask = shift_labels.eq(-100)
+    valid_labels = shift_labels.clone()
+    valid_labels[invalid_mask] = 0
+    all_logps[invalid_mask] = 0 
+
+    per_token_logps = torch.zeros_like(labels, dtype=logits.dtype, device=logits.device)
+    per_token_logps[:, 1:] = torch.gather(all_logps, dim=-1, index=valid_labels.unsqueeze(-1)).squeeze(-1)
+    log_prob = torch.sum(per_token_logps, dim=-1)
+    average_log_prob = log_prob/torch.sum(~invalid_mask, dim=-1).clamp_min(1)
     ### <===
 
     assert per_token_logps.shape == labels.shape, f"per_token_logps.shape={per_token_logps.shape}, labels.shape={labels.shape}"
