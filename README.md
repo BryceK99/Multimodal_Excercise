@@ -213,6 +213,30 @@ Explicit Rewards](https://arxiv.org/abs/2402.05369)
 
 **要求：** 训练后模型的 CHAIR 指标应满足 **CHAIRs < 29.5, CHAIRi < 7.8**
 
+### 4. 偏好训练显存估算工具
+
+在开始偏好对齐训练之前，建议使用提供的显存估算工具评估所需的GPU资源，避免因显存不足导致训练失败。
+
+**工具说明：** `estimate_preference_memory.py` 可以根据模型配置、训练参数和优化设置，估算偏好对齐训练所需的GPU显存。
+
+**使用示例：**
+```bash
+# 使用默认配置（8B参数，4个GPU，ZeRO-2优化）
+python estimate_preference_memory.py
+
+# 自定义配置
+python estimate_preference_memory.py \
+    --total_params 8.0 \
+    --num_gpus 4 \
+    --batch_size 1 \
+    --sequence_length 2048 \
+    --zero_stage 2 \
+    --gradient_checkpointing \
+    --dtype bf16
+```
+
+**详细文档：** 参见 [docs/memory_estimation_guide.md](docs/memory_estimation_guide.md) 了解完整的使用说明和参数配置。
+
 ## 数据下载与环境配置
 ### 1. 数据下载
 
