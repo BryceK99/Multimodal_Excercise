@@ -1013,7 +1013,6 @@ class LLMModel(LLMPreTrainedModel):
             raise ValueError(
                 "You have to specify either decoder_input_ids or decoder_inputs_embeds"
             )
-        print(batch_size, seq_length)
 
         if self.gradient_checkpointing and self.training:
             if use_cache:

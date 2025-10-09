@@ -8,7 +8,7 @@ MODEL_NAME_OR_PATH=${MODEL_NAME_OR_PATH:-"HaoyeZhang/MLLM_Excercise_Model"}
 DATA_PATH=${DATA_PATH:-"data/objhal_bench.jsonl"}
 
 # 传入解码方式（beam | sampling | greedy），默认 beam
-DECODING=${1:-beam}
+DECODING=sampling
 SAVE_PATH=${SAVE_PATH:-"objhal_bench_answer_${DECODING}.jsonl"}
 
 # 可选环境变量控制

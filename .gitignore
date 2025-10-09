@@ -47,13 +47,14 @@ submissions/
 # Data
 data/images
 data/objhal_bench.jsonl
-preference_train.json
+data/preference_train.json
+data/vg
 objhal_bench_answer.jsonl
 chair_300.pkl
 
 HaoyeZhang/
 coco_annotations
-outputs/lora
+outputs
 runs_grid
 objhal_bench_answer*
 *pkl

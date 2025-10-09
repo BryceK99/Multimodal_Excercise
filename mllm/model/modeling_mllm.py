@@ -374,6 +374,23 @@ class MLLMModel(MLLMPreTrainedModel):
                 model_inputs)
             vllm_embedding, vision_hidden_states = self.get_vllm_embedding(
                 model_inputs)
+            # Fix attention_mask length mismatch after visual-token replacement
+            if isinstance(attention_mask, torch.Tensor):
+                old_len = attention_mask.shape[-1]
+                new_len = vllm_embedding.shape[1]
+                if old_len != new_len:
+                    # preserve left padding count per batch
+                    with torch.no_grad():
+                        bsz = attention_mask.size(0)
+                        left_pads = (old_len - attention_mask.sum(dim=-1)).clamp(min=0)
+                        new_mask = torch.ones((bsz, new_len), dtype=attention_mask.dtype, device=attention_mask.device)
+                        for i in range(bsz):
+                            lp = int(left_pads[i].item())
+                            lp = max(0, min(lp, new_len))
+                            if lp > 0:
+                                new_mask[i, :lp] = 0
+                        attention_mask = new_mask
+
             if stream:
                 result = self._decode_stream(vllm_embedding,
                                              tokenizer,

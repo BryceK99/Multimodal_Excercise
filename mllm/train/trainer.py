@@ -176,7 +176,7 @@ class SFTTrainer(Trainer):
 
         return (loss, logits, labels)
 
-    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]], num) -> torch.Tensor:
+    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
         """
         Perform a training step on a batch of inputs.
 
@@ -274,9 +274,9 @@ class PreferenceTrainer(Trainer):
         reference_rejected_logps: torch.FloatTensor,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         ### ===> TODO: 实现偏好对齐训练 Loss 计算
-        losses = None
-        chosen_rewards = None
-        rejected_rewards = None
+        chosen_rewards = beta*(policy_chosen_logps-reference_chosen_logps)
+        rejected_rewards = beta*(policy_rejected_logps-reference_rejected_logps)
+        losses = -torch.log(torch.sigmoid(chosen_rewards))-(torch.log(torch.sigmoid(-chosen_rewards))+torch.log(torch.sigmoid(-rejected_rewards)))/2
 
         return losses, chosen_rewards.detach(), rejected_rewards.detach()
         ### <===
@@ -329,7 +329,28 @@ class PreferenceTrainer(Trainer):
 
         ### ===> TODO: 计算训练过程中，模型在正、负样本上的 logp
         # 注意：我们在数据处理中获取了正负样本拼接后的输入信息，需要将拼接后的输出结果还原
-        policy_win_logp, policy_rej_logp = None, None
+        bsz = win_input_ids.size(0)
+
+        if not args.use_lora:
+            policy_seq_logp = get_batch_logps(
+                model=model,
+                data=data,
+                labels=concatenated_labels,
+                average_log_prob=args.preference_use_average_logp,
+            )
+        else:
+            with model._enable_peft_forward_hooks(**data):
+                policy_seq_logp = get_batch_logps(
+                    model=model.base_model,
+                    data=data,
+                    labels=concatenated_labels,
+                    average_log_prob=args.preference_use_average_logp,
+                )
+
+        if policy_seq_logp.dim() > 1:
+            policy_seq_logp = policy_seq_logp.squeeze(-1)
+        policy_win_logp = policy_seq_logp[:bsz]
+        policy_rej_logp = policy_seq_logp[bsz:]
         ### <===
 
         # print("trainer: ref_win_logp:", ref_win_logp.dtype, ref_win_logp.item())

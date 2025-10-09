@@ -114,14 +114,19 @@ class ModelProcessor(ProcessorMixin):
         image_start_tokens += 1
         image_end_tokens = torch.where(end_cond)[0]
 
-        valid_image_nums = max(len(image_start_tokens), len(image_end_tokens))
+        # Pair starts and ends conservatively to avoid mismatch caused by truncation or template artifacts
+        valid_image_nums = min(len(image_start_tokens), len(image_end_tokens))
 
-        image_bounds = torch.hstack(
-            [
-                image_start_tokens[:valid_image_nums].unsqueeze(-1),
-                image_end_tokens[:valid_image_nums].unsqueeze(-1),
-            ]
-        )
+        if valid_image_nums == 0:
+            # Return an empty (0, 2) tensor to indicate no valid image bounds
+            image_bounds = torch.empty((0, 2), dtype=torch.long)
+        else:
+            image_bounds = torch.hstack(
+                [
+                    image_start_tokens[:valid_image_nums].unsqueeze(-1),
+                    image_end_tokens[:valid_image_nums].unsqueeze(-1),
+                ]
+            )
         return input_ids, image_bounds
 
     def _convert_images_texts_to_inputs(

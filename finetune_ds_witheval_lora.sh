@@ -13,7 +13,7 @@ set -euo pipefail
 
 # 安全展开，避免未绑定变量导致 set -u 下报错
 export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$(realpath .)"
-export CUDA_VISIBLE_DEVICES=0,1
+export CUDA_VISIBLE_DEVICES=0
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
 export TOKENIZERS_PARALLELISM=false
 # 缓解显存碎片
@@ -21,7 +21,7 @@ export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-"max_split_size_mb:128
 
 # 分布式占位（当前默认单卡，保留变量方便将来扩展）
 GPUS_PER_NODE=1
-NNODES=2
+NNODES=1
 NODE_RANK=0
 MASTER_ADDR=localhost
 MASTER_PORT=6001

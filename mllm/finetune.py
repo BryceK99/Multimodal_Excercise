@@ -45,7 +45,7 @@ class DataArguments:
 @dataclass
 class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)
-    optim: str = field(default="adamw_torch")
+    optim: str = field(default="adamw_bnb_8bit")
     model_max_length: int = field(
         default=2048,
         metadata={
@@ -201,10 +201,13 @@ def init_model(model_args, data_args, training_args, lora_args):
                 "FSDP or ZeRO3 are not incompatible with QLoRA."
             )
 
+    # Use low_cpu_mem_usage to avoid building a full CPU copy of weights before moving to GPU/ZeRO partitions.
+    # This helps mitigate host OOM when the base model is large (8B+) and ZeRO will shard parameters anyway.
     model = MLLMModel.from_pretrained(
         model_args.model_name_or_path,
         torch_dtype=compute_dtype,
         device_map=device_map,
+        low_cpu_mem_usage=True,
     )
 
     tokenizer = AutoTokenizer.from_pretrained(

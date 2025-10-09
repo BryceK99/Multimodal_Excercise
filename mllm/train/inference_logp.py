@@ -143,9 +143,19 @@ def get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor, tokeniz
     ## 注意：
     ## 计算时注意logits与label对应关系是否正确，当前位置logits应该以后一个词为目标
     ## 只有输出部分应该被计算再内
-    per_token_logps = None
-    log_prob = None
-    average_log_prob = None
+    shifted_logits = logits[:, :-1, :].contiguous()
+    all_logps = torch.log_softmax(shifted_logits, dim=-1)
+
+    shift_labels = labels[:, 1:].contiguous()
+    invalid_mask = shift_labels.eq(-100)
+    valid_labels = shift_labels.clone()
+    valid_labels[invalid_mask] = 0
+    all_logps[invalid_mask] = 0 
+
+    per_token_logps = torch.zeros_like(labels, dtype=logits.dtype, device=logits.device)
+    per_token_logps[:, 1:] = torch.gather(all_logps, dim=-1, index=valid_labels.unsqueeze(-1)).squeeze(-1)
+    log_prob = torch.sum(per_token_logps, dim=-1)
+    average_log_prob = log_prob/torch.sum(~invalid_mask, dim=-1).clamp_min(1)
     ### <===
 
     assert per_token_logps.shape == labels.shape, f"per_token_logps.shape={per_token_logps.shape}, labels.shape={labels.shape}"
@@ -288,35 +298,31 @@ def colloator_fn(data_list):
     return data
 
 def get_dataset_inference_logp(model_path, data_path, img_dir, cache_file, transform=None, slice_config=None, batch_vision=True, max_length=2048):
-    model = PreferenceModel(model_path, max_length=max_length)
-    org_data = read_json(data_path) if isinstance(data_path, str) else data_path
-    dataset = PreferenceInferenceDataset(data=org_data, img_dir=img_dir,
-                                         tokenizer=model.tokenizer,
-                                         transform=transform if transform is not None else build_transform(),
-                                         slice_config=slice_config if slice_config is not None else model.slice_config,
-                                         batch_vision=batch_vision,
-                                         max_length=max_length)
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    world_size = torch.distributed.get_world_size() if torch.distributed.is_initialized() else 1
 
-    dataloader = torch_data.DataLoader(dataset, batch_size=1, collate_fn=colloator_fn,
-                                       num_workers=5, shuffle=False,
-                                       sampler=InferenceSampler(len(dataset)))
-
-    outputs = get_multimodal_sample_logps(model, dataloader) # win_logp_list, win_avg_logp_list, win_per_token_logp_list, rej_logp_list, rej_avg_logp_list, rej_per_token_logp_list
-
-    world_size = torch.distributed.get_world_size()
-    merged_outputs = [[None for _ in range(world_size)] for i in range(len(outputs))]
-    for i in range(len(outputs)):
-        torch.distributed.all_gather_object(merged_outputs[i], outputs[i])
-        merged_outputs[i] = [_ for _ in itertools.chain.from_iterable(merged_outputs[i])]
-
-
-    win_logp_list, win_avg_logp_list, win_per_token_logp_list, rej_logp_list, rej_avg_logp_list, rej_per_token_logp_list \
-        = merged_outputs
-
-    logps = list(zip(win_logp_list, win_avg_logp_list, win_per_token_logp_list, rej_logp_list, rej_avg_logp_list, rej_per_token_logp_list))
-
-    data_with_logp = save_logp_pkl(dataset.data, cache_file, logps, overwrite_logps=True)
-
-    torch.distributed.barrier()
-
-    del model
+    if rank == 0:
+        model = PreferenceModel(model_path, max_length=max_length)
+        org_data = read_json(data_path) if isinstance(data_path, str) else data_path
+        dataset = PreferenceInferenceDataset(data=org_data, img_dir=img_dir,
+                                             tokenizer=model.tokenizer,
+                                             transform=transform if transform is not None else build_transform(),
+                                             slice_config=slice_config if slice_config is not None else model.slice_config,
+                                             batch_vision=batch_vision,
+                                             max_length=max_length)
+        dataloader = torch_data.DataLoader(dataset, batch_size=1, collate_fn=colloator_fn,
+                                           num_workers=1, shuffle=False,
+                                           sampler=InferenceSampler(len(dataset)))
+        outputs = get_multimodal_sample_logps(model, dataloader)
+        torch.cuda.empty_cache()
+        # Gather on rank0 only -> just use local outputs (no need all_gather since we compute only once)
+        win_logp_list, win_avg_logp_list, win_per_token_logp_list, rej_logp_list, rej_avg_logp_list, rej_per_token_logp_list = outputs
+        logps = list(zip(win_logp_list, win_avg_logp_list, win_per_token_logp_list, rej_logp_list, rej_avg_logp_list, rej_per_token_logp_list))
+        save_logp_pkl(dataset.data, cache_file, logps, overwrite_logps=True)
+        del model
+        del outputs
+        torch.cuda.empty_cache()
+    # Sync so other ranks wait until file exists
+    if world_size > 1:
+        torch.distributed.barrier()
+    return

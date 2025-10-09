@@ -10,10 +10,10 @@ DATA_PATH=${DATA_PATH:-"data/objhal_bench.jsonl"}
 COCO_PATH=${COCO_PATH:-"./coco_annotations"}
 CHAIR_CACHE=${CHAIR_CACHE:-"./chair_300.pkl"}
 OUT_BASE=${OUT_BASE:-"./runs_grid"}
-MAX_SAMPLES=${MAX_SAMPLES:-50}
+MAX_SAMPLES=${MAX_SAMPLES:-300}
 
 mkdir -p "${OUT_BASE}"
-master_summary="${OUT_BASE}/summary_all.csv"
+master_summary="${OUT_BASE}/summary.csv"
 echo "run,mode,temperature,top_p,top_k,num_beams,max_new_tokens,rep_pen,CHAIRs(%),CHAIRi(%),Recall(%),Len(x0.01 tokens)" > "${master_summary}"
 
 function one_mode() {
@@ -71,9 +71,9 @@ echo "=== Sampling 5 组 ==="
 # 5组：温度/TopP/TopK/长度/重复惩罚的组合
 # one_mode sampling 1 0.70 0.85 80  0  160 1.06
 # one_mode sampling 2 0.75 0.88 80  0  160 1.08
-# one_mode sampling 3 0.80 0.90 60  0  170 1.06
+one_mode sampling 3 0.80 0.90 60  0  170 1.06
 # one_mode sampling 4 0.75 0.92 100 0  180 1.05
-one_mode sampling 5 0.72 0.87 80  0  150 1.10
+# one_mode sampling 5 0.72 0.87 80  0  150 1.10
 
 echo "=== Beam 5 组 ==="
 # one_mode beam 1  0    0    0   3  160 1.08

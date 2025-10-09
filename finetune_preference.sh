@@ -1,14 +1,23 @@
 #!/bin/bash
 export PYTHONPATH=$PYTHONPATH:`realpath .`
 
-MODEL="/mnt/data/user/tc_agi/zhy3488/models/MiniCPM-V-2_6"
-DATA_DIR="/data/zhanghaoye/checkpoints/MiniCPM-V-26-logps"
+MODEL="HaoyeZhang/MLLM_Excercise_Model"
+# 专门的 logp 缓存目录，避免与项目根目录混在一起
+DATA_DIR="cache/logps"
+mkdir -p "$DATA_DIR"
 DATA="data/preference_train.json"
-REF_NAME="minicpm-v-26_test_reconstruct0929"
+REF_NAME="reconstruct"
 
-MODEL_MAX_Length=2048
+MODEL_MAX_Length=1024
 
-deepspeed --master_port 29600 --include localhost:0,1,2,3 mllm/finetune.py \
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
+export MALLOC_TRIM_THRESHOLD_=131072
+export MALLOC_ARENA_MAX=2
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:64
+export HF_HUB_DISABLE_TELEMETRY=1
+export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
+
+deepspeed --master_port 29600 --include localhost:0,1 mllm/finetune.py \
     --model_name_or_path $MODEL \
     --data_path $DATA \
     --data_dir $DATA_DIR \
@@ -21,10 +30,10 @@ deepspeed --master_port 29600 --include localhost:0,1,2,3 mllm/finetune.py \
     --fp16 false \
     --fp16_full_eval false \
     --do_train \
-    --tune_vision true \
-    --tune_llm true \
+    --tune_vision false \
+    --tune_llm false \
     --model_max_length $MODEL_MAX_Length \
-    --max_slice_nums 9 \
+    --max_slice_nums 4 \
     --max_steps 2000 \
     --output_dir output/mllm_preference_training \
     --logging_dir output/mllm_preference_training/log \
@@ -36,15 +45,17 @@ deepspeed --master_port 29600 --include localhost:0,1,2,3 mllm/finetune.py \
     --save_strategy "steps" \
     --save_steps 300 \
     --save_total_limit 10 \
-    --learning_rate 1e-5 \
+    --learning_rate 5e-5 \
     --weight_decay 0.01 \
     --warmup_ratio 0.05 \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --gradient_checkpointing true \
-    --deepspeed mllm/ds_pref_config_zero2.json \
+    --deepspeed mllm/ds_pref_config_zero2_stage2_min.json \
     --report_to "tensorboard" \
-    --dataloader_num_workers 16 \
+    --dataloader_num_workers 1 \
+    --dataloader_pin_memory false \
     --preference_use_average_logp False \
     --preference_beta 0.5 \
-    --task Preference
+    --task Preference \
+    --optim adamw_bnb_8bit
