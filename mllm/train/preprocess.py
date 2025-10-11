@@ -119,10 +119,17 @@ def preference_collator_fn(instances, pad_token_id=0, max_length=2048):
         win_batch['labels'], rej_batch['labels'], -100)
     concatenated_position_ids = concate_pad(
         win_batch['position_ids'], rej_batch['position_ids'], pad_token_id)
+    # build concatenated attention mask if present (else derive from input_ids)
+    if 'attention_mask' in win_batch and 'attention_mask' in rej_batch:
+        concatenated_attention_mask = concate_pad(
+            win_batch['attention_mask'], rej_batch['attention_mask'], 0)
+    else:
+        concatenated_attention_mask = concatenated_input_ids.ne(pad_token_id).to(torch.bool)
 
     batch = dict(
         concatenated_input_ids=concatenated_input_ids,
         concatenated_labels=concatenated_labels,
+        concatenated_attention_mask=concatenated_attention_mask,
         win_input_ids=win_batch['input_ids'],
         rej_input_ids=rej_batch['input_ids'],
         win_labels=win_batch['labels'],

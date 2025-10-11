@@ -143,19 +143,26 @@ def get_batch_logps(logits: torch.FloatTensor, labels: torch.LongTensor, tokeniz
     ## 注意：
     ## 计算时注意logits与label对应关系是否正确，当前位置logits应该以后一个词为目标
     ## 只有输出部分应该被计算再内
+    # Shift for next-token prediction alignment
     shifted_logits = logits[:, :-1, :].contiguous()
-    all_logps = torch.log_softmax(shifted_logits, dim=-1)
-
     shift_labels = labels[:, 1:].contiguous()
+
+    # Mask: tokens with label -100 are ignored
     invalid_mask = shift_labels.eq(-100)
-    valid_labels = shift_labels.clone()
-    valid_labels[invalid_mask] = 0
-    all_logps[invalid_mask] = 0 
+    # Replace ignored labels with a valid index (e.g. 0) for gather; will zero them out later
+    gather_labels = shift_labels.clone()
+    gather_labels[invalid_mask] = 0
+
+    # Compute log probs (no in-place modification on this tensor to keep autograd graph intact)
+    log_probs = torch.log_softmax(shifted_logits, dim=-1)
+    gathered = log_probs.gather(-1, gather_labels.unsqueeze(-1)).squeeze(-1)
+    gathered = gathered.masked_fill(invalid_mask, 0.0)
 
     per_token_logps = torch.zeros_like(labels, dtype=logits.dtype, device=logits.device)
-    per_token_logps[:, 1:] = torch.gather(all_logps, dim=-1, index=valid_labels.unsqueeze(-1)).squeeze(-1)
-    log_prob = torch.sum(per_token_logps, dim=-1)
-    average_log_prob = log_prob/torch.sum(~invalid_mask, dim=-1).clamp_min(1)
+    per_token_logps[:, 1:] = gathered
+    log_prob = per_token_logps.sum(dim=-1)
+    denom = (~invalid_mask).sum(dim=-1).clamp_min(1)
+    average_log_prob = log_prob / denom
     ### <===
 
     assert per_token_logps.shape == labels.shape, f"per_token_logps.shape={per_token_logps.shape}, labels.shape={labels.shape}"

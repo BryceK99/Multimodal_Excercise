@@ -10,14 +10,14 @@ REF_NAME="reconstruct"
 
 MODEL_MAX_Length=1024
 
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:128
 export MALLOC_TRIM_THRESHOLD_=131072
 export MALLOC_ARENA_MAX=2
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,max_split_size_mb:64
+# Use conservative allocator settings; expandable_segments triggered internal assert in your run.
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:64
 export HF_HUB_DISABLE_TELEMETRY=1
 export TRANSFORMERS_NO_ADVISORY_WARNINGS=1
 
-deepspeed --master_port 29600 --include localhost:0,1 mllm/finetune.py \
+deepspeed --master_port 29600 --include localhost:0 mllm/finetune.py \
     --model_name_or_path $MODEL \
     --data_path $DATA \
     --data_dir $DATA_DIR \

@@ -327,28 +327,19 @@ class PreferenceTrainer(Trainer):
             "attention_mask": concatenated_attention_mask
         }
 
-        ### ===> TODO: 计算训练过程中，模型在正、负样本上的 logp
-        # 注意：我们在数据处理中获取了正负样本拼接后的输入信息，需要将拼接后的输出结果还原
+        ### ===> 计算模型在拼接序列上的 logp，然后拆回 win/rej
         bsz = win_input_ids.size(0)
-
         if not args.use_lora:
-            policy_seq_logp = get_batch_logps(
-                model=model,
-                data=data,
-                labels=concatenated_labels,
-                average_log_prob=args.preference_use_average_logp,
-            )
+            outputs = model(data=data, use_cache=False)
         else:
             with model._enable_peft_forward_hooks(**data):
-                policy_seq_logp = get_batch_logps(
-                    model=model.base_model,
-                    data=data,
-                    labels=concatenated_labels,
-                    average_log_prob=args.preference_use_average_logp,
-                )
+                outputs = model.base_model(data=data, use_cache=False)
 
-        if policy_seq_logp.dim() > 1:
-            policy_seq_logp = policy_seq_logp.squeeze(-1)
+        logits = outputs.logits  # (2*bsz, seq_len, vocab)
+        log_prob, avg_log_prob = get_batch_logps(
+            logits, concatenated_labels, self.tokenizer
+        )  # each shape: (2*bsz,)
+        policy_seq_logp = avg_log_prob if args.preference_use_average_logp else log_prob
         policy_win_logp = policy_seq_logp[:bsz]
         policy_rej_logp = policy_seq_logp[bsz:]
         ### <===

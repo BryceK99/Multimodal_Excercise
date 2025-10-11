@@ -49,6 +49,7 @@ data/images
 data/objhal_bench.jsonl
 data/preference_train.json
 data/vg
+data/vg_
 objhal_bench_answer.jsonl
 chair_300.pkl
 

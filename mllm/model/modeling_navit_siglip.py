@@ -18,6 +18,7 @@
 
 import os
 import math
+import os
 import warnings
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple, Union
@@ -411,8 +412,14 @@ class SiglipAttention(nn.Module):
                 )
             attn_weights = attn_weights + attention_mask
 
-        # upcast attention to fp32
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
+        # upcast attention to fp32; allow optional in-place softmax to reduce peak fragments
+        if os.environ.get("MLLM_INPLACE_SOFTMAX", "0") == "1":
+            # We perform softmax in fp32 then cast back without creating an extra large temp tensor.
+            attn_weights = attn_weights.to(torch.float32)
+            attn_weights.softmax_(dim=-1)
+            attn_weights = attn_weights.to(query_states.dtype)
+        else:
+            attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
