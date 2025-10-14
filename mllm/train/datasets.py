@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 from PIL import Image
 from typing import Dict
 from utils.file_io import read_json, bytes_to_PIL_image, b64_to_PIL_image
-from mllm.train.preprocess import preprocess
+from mllm.train.preprocess import preprocess, fill_boxes_in_conversations
 from mllm.train.inference_logp import get_dataset_inference_logp
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,10 @@ class SupervisedDataset(Dataset):
         
         raw = self.raw_data[i]
 
-        images_dict = { "<image>" : Image.open(raw["image"]).convert("RGB") } 
+        image_path = raw["image"]
+        image_path = "data/sft" + image_path[image_path.find("/"):]
+
+        images_dict = { "<image>" : Image.open(image_path).convert("RGB") } 
         conversations = raw["conversations"]
         
         preprocessed = preprocess(

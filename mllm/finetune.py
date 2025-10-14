@@ -219,7 +219,8 @@ def init_model(model_args, data_args, training_args, lora_args):
     if not training_args.tune_llm:
         model.llm.requires_grad_(False)
 
-    if training_args.use_lora and training_args.task == 'LM':
+    # if training_args.use_lora and training_args.task == 'LM':
+    if training_args.use_lora:
         if training_args.use_lora and training_args.tune_llm:
             raise ValueError("The model cannot simultaneously adjust LLM parameters and apply LoRA.")
 

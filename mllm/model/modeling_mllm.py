@@ -93,34 +93,15 @@ class MLLMModel(MLLMPreTrainedModel):
         bs = len(data['input_ids'])
         ### ===> 合并 vision_hidden_states 与 vllm_embedding，
         # 其中，vision_hidden_states 为视觉编码，当前 vllm_embedding 仅为语言模型编码
-        embed_dtype = vllm_embedding.dtype
-        embed_device = vllm_embedding.device
         vllm_embedding_list = []
         for i in range(bs):
             new_embedding_list = []
             last_end = 0
             for id, (start, end) in enumerate(data['image_bound'][i]):
-                # print(id, start, end, vision_hidden_states[i][id].shape, vllm_embedding[i].shape)
                 new_embedding_list.append(vllm_embedding[i, last_end:start])
-                placeholder_len = end - start + 1
-                if id < len(vision_hidden_states[i]) and isinstance(
-                        vision_hidden_states[i][id], torch.Tensor):
-                    vision_feat = vision_hidden_states[i][id]
-                    vision_feat = vision_feat.to(dtype=embed_dtype,
-                                                 device=embed_device)
-                    vision_len = vision_feat.shape[0]
-                    if vision_len < placeholder_len:
-                        pad = vision_feat.new_zeros((placeholder_len - vision_len,
-                                                     vision_feat.shape[1]))
-                        vision_feat = torch.cat((vision_feat, pad))
-                    elif vision_len > placeholder_len:
-                        vision_feat = vision_feat[:placeholder_len]
-                    new_embedding_list.append(vision_feat)
-                else:
-                    # 当不存在有效视觉特征时，回退到原始 token 的嵌入
-                    new_embedding_list.append(vllm_embedding[i, start:end + 1])
-                # 无论是否替换为视觉特征，都需要推进游标
-                last_end = end + 1
+                if id < len(vision_hidden_states[i]):
+                    new_embedding_list.append(vision_hidden_states[i][id])
+                last_end = end
             new_embedding_list.append(vllm_embedding[i, last_end:])
             new_embedding = torch.cat(new_embedding_list, dim=0)
             vllm_embedding_list.append(new_embedding)
@@ -240,20 +221,13 @@ class MLLMModel(MLLMPreTrainedModel):
         ]
         ### ===> TODO: 实现语言模型 generate
         output = self.llm.generate(inputs_embeds=inputs_embeds,
+                                   input_ids=None,
                                    pad_token_id=0,
                                    eos_token_id=terminators,
-                                   attention_mask=attention_mask,
                                    **kwargs)
-
         ### <===
         if decode_text:
-            prompt_lengths = None
-            if attention_mask is not None:
-                if isinstance(attention_mask, torch.Tensor):
-                    prompt_lengths = attention_mask.sum(dim=-1).tolist()
-                else:
-                    prompt_lengths = [int(mask.sum()) for mask in attention_mask]
-            return self._decode_text(output, tokenizer, prompt_lengths=prompt_lengths)
+            return self._decode_text(output, tokenizer)
         return output
 
     def _decode_stream(self, inputs_embeds, tokenizer, **kwargs):
@@ -280,63 +254,11 @@ class MLLMModel(MLLMPreTrainedModel):
         ]
         ### TODO: ===> 编写输出解码过程
         # 其中应该去除tokenizer.bos_id（句子起始特殊符号），以及terminators中的符号
-        # 仅解码新生成部分，避免包含提示词
-        if isinstance(result_ids, torch.Tensor):
-            sequences = result_ids
-        else:
-            try:
-                sequences = torch.as_tensor(result_ids)
-            except Exception:
-                # 某些情况下 transformers 返回 list[list[int]]
-                sequences = torch.tensor(result_ids)
-
-        if sequences.dim() == 1:
-            sequences = sequences.unsqueeze(0)
-
-        texts = []
-        bsz = sequences.size(0)
-        for b in range(bsz):
-            seq = sequences[b]
-            start = 0
-            if prompt_lengths is not None and b < len(prompt_lengths):
-                start = int(prompt_lengths[b])
-                # 如果返回的序列仅包含新生成 token（长度小于等于提示长度），则不剪切
-                if seq.numel() <= start:
-                    start = 0
-            gen_ids = seq[start:]
-            gen_ids = gen_ids[gen_ids != 0]
-            gen_ids = [
-                int(tid) for tid in gen_ids.tolist()
-                if tid != tokenizer.bos_token_id and tid not in terminators
-            ]
-            texts.append(tokenizer.decode(gen_ids, skip_special_tokens=True))
-
-        # 如果为空，尝试回退一次
-        if len(texts) == 1 and (texts[0] is None or texts[0].strip() == ""):
-            try:
-                # 回退路径：直接整体解码（去除特殊符号）
-                ids = sequences[0]
-                ids = ids[ids != 0]
-                ids = [int(tid) for tid in ids.tolist() if tid != tokenizer.bos_token_id and tid not in terminators]
-                fallback_text = tokenizer.decode(ids, skip_special_tokens=True)
-                texts[0] = fallback_text
-            except Exception:
-                pass
-        # 仍为空则尽量截取到第一个终止符之前
-        if len(texts) == 1 and (texts[0] is None or texts[0].strip() == ""):
-            try:
-                ids = sequences[0].tolist()
-                cut = len(ids)
-                for idx, tid in enumerate(ids):
-                    if tid in terminators:
-                        cut = idx
-                        break
-                ids = [int(tid) for tid in ids[:cut] if tid != 0 and tid != tokenizer.bos_token_id]
-                texts[0] = tokenizer.decode(ids, skip_special_tokens=True)
-            except Exception:
-                pass
-
-        result_text = texts[0] if len(texts) == 1 else texts
+        terminators.append(tokenizer.bos_id)
+        cleaned_ids = [[id for id in seq if id not in terminators] for seq in result_ids]
+        result_text = tokenizer.batch_decode(
+            cleaned_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
+        )
         ### <===
         return result_text
 
@@ -369,37 +291,14 @@ class MLLMModel(MLLMPreTrainedModel):
         ### ===> TODO: 实现多模态大模型的 generation，注意不要计算模型参数的梯度。
         # 1. 获取模型视觉信号
         # 2. 实现 self._decode()，返回解码后的文本
-        with torch.inference_mode():
-            vision_hidden_states = self.get_vision_hidden_states(
-                model_inputs)
-            vllm_embedding, vision_hidden_states = self.get_vllm_embedding(
-                model_inputs)
-            # Fix attention_mask length mismatch after visual-token replacement
-            if isinstance(attention_mask, torch.Tensor):
-                old_len = attention_mask.shape[-1]
-                new_len = vllm_embedding.shape[1]
-                if old_len != new_len:
-                    # preserve left padding count per batch
-                    with torch.no_grad():
-                        bsz = attention_mask.size(0)
-                        left_pads = (old_len - attention_mask.sum(dim=-1)).clamp(min=0)
-                        new_mask = torch.ones((bsz, new_len), dtype=attention_mask.dtype, device=attention_mask.device)
-                        for i in range(bsz):
-                            lp = int(left_pads[i].item())
-                            lp = max(0, min(lp, new_len))
-                            if lp > 0:
-                                new_mask[i, :lp] = 0
-                        attention_mask = new_mask
-
-            if stream:
-                result = self._decode_stream(vllm_embedding,
+        vllm_embeddings, _ = self.get_vllm_embedding(model_inputs)
+        if stream:
+            result = self._decode_stream(vllm_embeddings,
                                              tokenizer,
-                                             max_new_tokens=kwargs.get(
-                                                 'max_new_tokens', 50),
                                              attention_mask=attention_mask,
                                              **kwargs)
-            else:
-                result = self._decode(vllm_embedding,
+        else:
+            result = self._decode(vllm_embeddings,
                                       tokenizer,
                                       decode_text=decode_text,
                                       attention_mask=attention_mask,

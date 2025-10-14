@@ -335,6 +335,62 @@ def preprocess(
 
     return input_dict
 
+
+def format_box_tokens(tokenizer, box_xyxy_rel):
+    """Format a single normalized xyxy box as a token string using tokenizer's box markers.
+    box_xyxy_rel: [x1, y1, x2, y2] in [0,1]. Returns a string like
+    "<box>x1,y1,x2,y2</box>" with 4-decimal precision.
+    """
+    try:
+        x1, y1, x2, y2 = [float(v) for v in box_xyxy_rel]
+    except Exception:
+        return ""
+    x1 = max(0.0, min(1.0, x1))
+    y1 = max(0.0, min(1.0, y1))
+    x2 = max(0.0, min(1.0, x2))
+    y2 = max(0.0, min(1.0, y2))
+    return f"{tokenizer.box_start}{x1:.4f},{y1:.4f},{x2:.4f},{y2:.4f}{tokenizer.box_end}"
+
+
+def fill_boxes_in_conversations(conversations, tokenizer, target, boxes_seq=None):
+    """Replace '<boxes>' placeholders in user/assistant messages based on target['boxes'].
+
+    Inputs:
+    - conversations: list of {'role': 'user'|'assistant', 'content': str}
+    - tokenizer: provides box_start/box_end strings
+    - target: {'boxes': [[x1,y1,x2,y2], ...]} (normalized [0,1])
+    - boxes_seq: optional sequence of list indices per turn, e.g., [[0],[1,2]]
+
+    Behavior:
+    - If a conversation message contains '<boxes>', it will be replaced by serialized boxes according to boxes_seq for that turn; if boxes_seq is None, all boxes are inserted.
+    - Nonexistent or malformed boxes are skipped silently.
+    Returns a new conversations list.
+    """
+    import copy as _copy
+    new_convs = _copy.deepcopy(conversations)
+    boxes = []
+    if isinstance(target, dict):
+        boxes = target.get('boxes') or []
+
+    def pick_indices(turn_idx):
+        if boxes_seq and turn_idx < len(boxes_seq):
+            idxs = boxes_seq[turn_idx]
+            if isinstance(idxs, (list, tuple)):
+                return [i for i in idxs if isinstance(i, int) and 0 <= i < len(boxes)]
+        return list(range(len(boxes)))
+
+    for t, msg in enumerate(new_convs):
+        content = msg.get('content', '')
+        if '<boxes>' not in content:
+            continue
+        idxs = pick_indices(t)
+        serial = ''.join(
+            format_box_tokens(tokenizer, boxes[i]) for i in idxs
+            if isinstance(boxes[i], (list, tuple)) and len(boxes[i]) == 4
+        )
+        msg['content'] = content.replace('<boxes>', serial)
+    return new_convs
+
 def preprocess_image(images_dict, tokenizer, transform, query_nums, slice_config, default_image_placeholder, use_image_id):
     image_placeholder_dict = {}
     images = []

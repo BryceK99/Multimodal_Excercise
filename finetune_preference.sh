@@ -35,8 +35,8 @@ deepspeed --master_port 29600 --include localhost:0 mllm/finetune.py \
     --model_max_length $MODEL_MAX_Length \
     --max_slice_nums 4 \
     --max_steps 2000 \
-    --output_dir output/mllm_preference_training \
-    --logging_dir output/mllm_preference_training/log \
+    --output_dir outputs/preference \
+    --logging_dir outputs/preference/log \
     --logging_strategy "steps" \
     --per_device_train_batch_size 1 \
     --per_device_eval_batch_size 1 \

@@ -28,12 +28,12 @@ MASTER_PORT=6001
 
 # Defaults
 MODEL="HaoyeZhang/MLLM_Excercise_Model"
-DATA_PATH="data/train.json"
-EVAL_PATH="data/test.json"
-OUTPUT_DIR="outputs/lora/"
+DATA_PATH="data/sft/train.json"
+EVAL_PATH="data/sft/test.json"
+OUTPUT_DIR="outputs/sft/"
 DS_CONFIG=""
 TASK="LM"
-IMAGE_FOLDER="data/images"
+IMAGE_FOLDER="data/sft/images"
 
 DISTRIBUTED_ARGS="
     --nproc_per_node $GPUS_PER_NODE \

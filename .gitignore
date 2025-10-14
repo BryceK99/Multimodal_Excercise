@@ -45,17 +45,17 @@ submissions/
 # work_dirs
 
 # Data
-data/images
 data/objhal_bench.jsonl
 data/preference_train.json
 data/vg
-data/vg_
-objhal_bench_answer.jsonl
-chair_300.pkl
+data/sft
+data/coco*
+data/objhal_bench_answer.jsonl
 
 HaoyeZhang/
-coco_annotations
 outputs
 runs_grid
-objhal_bench_answer*
 *pkl
+*zip
+*run
+*whl

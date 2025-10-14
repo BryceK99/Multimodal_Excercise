@@ -2,7 +2,7 @@
   "fp16": {"enabled": "auto"},
   "bf16": {"enabled": "auto"},
   "train_micro_batch_size_per_gpu": 1,
-  "train_batch_size": 2,
+  "train_batch_size": 1,
   "gradient_accumulation_steps": 1,
   "zero_optimization": {
     "stage": 2,
