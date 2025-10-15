@@ -184,6 +184,7 @@ def eval_model(args):
         args.model_name_or_path, trust_remote_code=True
     )
     img_processor_config = read_json('mllm/model/mllm_preprocessor_config.json')
+    img_processor_config['max_slice_nums'] = 1
     image_processor = ModelImageProcessor(**img_processor_config)
     processor = ModelProcessor(image_processor, tokenizer)
     model.eval().cuda()
@@ -294,7 +295,7 @@ def interactive_dialogue(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model-name-or-path", type=str)
+    parser.add_argument("--model-name-or-path", default="/root/Multimodal_Excercise/outputs/grounding/checkpoint-400", type=str)
     parser.add_argument("--question-file", type=str, default=None, help="Optional: evaluate a single JSONL file")
     parser.add_argument("--image-dir", type=str, default=None, help="Optional: image root; defaults to data/vg/coco/train2014")
     parser.add_argument("--sampling", action='store_true')

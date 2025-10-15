@@ -56,6 +56,12 @@ class TrainingArguments(transformers.TrainingArguments):
     tune_llm: Optional[bool] = field(default=True)
     use_lora: Optional[bool] = field(default=False)
     max_slice_nums: Optional[int] = field(default=9)
+    # Controls how many image pieces (source + patches) are processed at once by the vision encoder.
+    # Lower values reduce peak VRAM at the cost of more forward passes in the vision backbone.
+    vision_batch_size: Optional[int] = field(default=16)
+    # Controls the target scale used when (re)scaling images and deciding whether to slice.
+    # Larger scale_resolution reduces slicing triggers but increases per-image spatial tokens; 448 is a balanced default.
+    scale_resolution: Optional[int] = field(default=448)
 
     task: str = field(default='LM')
 
@@ -261,11 +267,22 @@ def init_model(model_args, data_args, training_args, lora_args):
 
     # Load data
     if hasattr(model.config, "slice_config"):
+        # Apply CLI overrides to slice behavior
         model.config.slice_config.max_slice_nums = training_args.max_slice_nums
+        # Also allow overriding scale_resolution to control slicing vs. resize balance
+        if hasattr(training_args, "scale_resolution") and training_args.scale_resolution:
+            model.config.slice_config.scale_resolution = training_args.scale_resolution
         slice_config = model.config.slice_config.to_dict()
     else:
+        # Fallback if model config doesn't expose slice_config as a nested object
         model.config.max_slice_nums = training_args.max_slice_nums
+        if hasattr(training_args, "scale_resolution") and training_args.scale_resolution:
+            model.config.scale_resolution = training_args.scale_resolution
         slice_config = model.config.to_dict()
+
+    # Control how many image tensors are fed into the vision encoder per micro-batch
+    if hasattr(model.config, "vision_batch_size"):
+        model.config.vision_batch_size = training_args.vision_batch_size
 
     if hasattr(model.config, "batch_vision_input"):
         batch_vision = model.config.batch_vision_input

@@ -43,6 +43,14 @@ SAVESTEPS=200
 SAVE_LIMIT=2
 STEPS=""    # 可选：限制步数快速冒烟
 
+# Vision & slicing controls (tune VRAM usage)
+# Smaller vision batch reduces peak VRAM in the vision encoder.
+VISION_BATCH=8
+# Lower max_slice_nums disables or reduces tiling; set 1 to disable slicing (use single resized image only).
+MAX_SLICE_NUMS=1
+# Target scale used for deciding slicing vs. resize; 448 is balanced, reduce if VRAM is tight.
+SCALE_RES=448
+
 # Fine-tune knobs
 TUNE_VISION=false
 TUNE_LLM=false
@@ -100,7 +108,10 @@ CMD=( python mllm/finetune.py \
 	--tune_vision "$TUNE_VISION" \
 	--lora_r 8 \
     --lora_alpha 16 \
-    --lora_dropout 0.05 )
+    --lora_dropout 0.05 \
+    --vision_batch_size "$VISION_BATCH" \
+    --max_slice_nums "$MAX_SLICE_NUMS" \
+    --scale_resolution "$SCALE_RES" )
 
 if [[ -n "$EVAL_PATH" ]]; then CMD+=( --eval_data_path "$EVAL_PATH" ); fi
 if [[ -n "$IMAGE_FOLDER" ]]; then CMD+=( --image_folder "$IMAGE_FOLDER" ); fi
